@@ -1,22 +1,21 @@
+# config.py
 """
-Configuration settings for the video switcher.
-Contains adjustable parameters for display, channel setup, and behavior.
+Configuration settings for the TV emulator.
 """
 import datetime
 
-# Reference start time for synchronized playback (UTC).
-REFERENCE_START_TIME = datetime.datetime(2025, 1, 1, 0, 0, 0).timetuple()
+# Reference start time (UTC epoch) for synchronized playback
+REFERENCE_START_TIME = datetime.datetime(2025, 1, 1, 0, 0, 0).timestamp()
 
-# Full-screen mode by default. Set to False for windowed mode.
-FULLSCREEN = True
-# Windowed mode size if not full-screen
-WINDOWED_SIZE = (800, 600)
+# Display settings
+FULLSCREEN = True            # start in fullscreen
+WINDOWED_SIZE = (800, 600)   # if not fullscreen
 
-# Path to video files directory
+# Path to directory containing video channel files
 MOVIES_PATH = "movies"
 
-# Starting channel (None to start at lowest channel)
+# Starting channel: None means the lowest channel
 START_CHANNEL = None
 
-# Transition type: "static" or "fade"
+# Transition effect type: "static" or "fade"
 TRANSITION_TYPE = "static"
