@@ -124,13 +124,31 @@ class VideoPlayer:
         ts = int(start_offset / float(self.video_stream.time_base))
         self.container.seek(ts, any_frame=False, backward=True, stream=self.video_stream)
 
-    def decode_frame(self):
-        """Return next RGB frame (HxWx3), auto-loop on EOF."""
+
+    def decode_frame(self) -> np.ndarray:
+        """
+        Decode and return the next RGB frame as an HxWx3 numpy array.
+        When end-of-file is reached or an EOFError is raised, seek back to
+        the start of the stream and continue.
+        """
         while True:
-            for pkt in self.container.demux(self.video_stream):
-                for frm in pkt.decode():
-                    return frm.to_ndarray(format="rgb24")
-            self.container.seek(0, stream=self.video_stream)
+            try:
+                for packet in self.container.demux(self.video_stream):
+                    for frame in packet.decode():
+                        return frame.to_ndarray(format="rgb24")
+            except av.error.EOFError:
+                # Hit end-of-file inside decode(); rewind and retry
+                pass
+            except Exception as e:
+                # Log other errors but keep going
+                print(f"[VideoPlayer] Video decode error: {e}")
+            # Seek back to the start of the video stream
+            try:
+                self.container.seek(0, stream=self.video_stream)
+            except Exception as seek_err:
+                print(f"[VideoPlayer] Seek error: {seek_err}")
+                # If even seeking fails, wait briefly before retrying
+                time.sleep(0.05)
 
     def close(self):
         """Stop audio thread & stream, close video container."""

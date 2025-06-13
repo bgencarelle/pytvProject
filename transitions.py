@@ -1,87 +1,83 @@
 # transitions.py
 """
 Transition effects between channels: blocky static noise + low-pass filtered audio,
-or a fade. You can adjust block size and cutoff frequency.
+or a fade. Parameters are read from config.py so you can tweak them there.
 """
 import time
 import numpy as np
 import pygame
+import config
 
-def static_transition(
-    screen,
-    duration: float = 1.5,
-    block_size: int = 2,
-    cutoff_hz: float = 4000.0
-):
+def static_transition(screen):
     """
-    Display blocky white-noise static on the screen and play matching low-pass
-    filtered sound.
-
-    Args:
-      screen:        pygame.Surface (your video display).
-      duration:      how long the transition lasts, in seconds.
-      block_size:    size of each square “pixel” of static in screen pixels.
-      cutoff_hz:     low-pass cutoff frequency in Hz for the audio hiss.
+    Display blocky “analog” static for config.STATIC_DURATION seconds
+    and play matching low-pass filtered sound.
     """
-    # ── Prepare audio buffer ─────────────────────────────────────────
-    sr  = 44100
-    n   = int(sr * duration)
-    # generate raw white noise (float in –1..1)
-    noise = np.random.randn(n).astype(np.float32)
+    # ── Audio setup ─────────────────────────────────────────────
+    sr       = 44100
+    n        = int(sr * config.STATIC_DURATION)
+    white    = np.random.randn(n).astype(np.float32)
 
-    # design single-pole low-pass filter (RC filter)
-    dt      = 1.0 / sr
-    rc      = 1.0 / (2 * np.pi * cutoff_hz)
-    alpha   = dt / (rc + dt)
+    # design one-pole low-pass
+    dt    = 1.0 / sr
+    rc    = 1.0 / (2 * np.pi * config.STATIC_CUTOFF_HZ)
+    alpha = dt / (rc + dt)
 
-    # apply IIR: y[n] = alpha * x[n] + (1-alpha) * y[n-1]
-    filtered = np.empty_like(noise)
-    filtered[0] = noise[0]
+    filtered = np.empty_like(white)
+    filtered[0] = white[0]
     for i in range(1, n):
-        filtered[i] = alpha * noise[i] + (1 - alpha) * filtered[i-1]
+        filtered[i] = alpha * white[i] + (1 - alpha) * filtered[i-1]
 
-    # scale to int16 range and make stereo
-    buf16    = np.int16(np.clip(filtered, -1, 1) * (32767//4))
-    stereo16 = np.repeat(buf16[:, None], 2, axis=1)
-    sound    = pygame.sndarray.make_sound(stereo16.copy(order='C'))
-
-    # play the looped static audio
+    # scale & stereo
+    buf16   = np.int16(np.clip(filtered, -1, 1) * (32767 // 4))
+    stereo  = np.repeat(buf16[:, None], 2, axis=1)
+    sound   = pygame.sndarray.make_sound(stereo.copy(order='C'))
     sound.play(-1)
 
-    # ── Prepare blocky static image ─────────────────────────────────
-    sw, sh      = screen.get_size()
-    small_w     = (sw + block_size - 1) // block_size
-    small_h     = (sh + block_size - 1) // block_size
+    # ── Image setup ─────────────────────────────────────────────
+    sw, sh    = screen.get_size()
+    bs        = config.STATIC_BLOCK_SIZE
+    small_w   = (sw + bs - 1) // bs
+    small_h   = (sh + bs - 1) // bs
 
     t0 = time.time()
-    while (time.time() - t0) < duration:
-        # generate small noise and scale up
-        block_noise = np.random.randint(
-            0, 256, (small_h, small_w, 3), dtype=np.uint8
-        )
-        # upscale by repeating pixels
-        noise_img = np.repeat(
-            np.repeat(block_noise, block_size, axis=0),
-            block_size, axis=1
-        )
-        # crop to screen size
-        noise_img = noise_img[:sh, :sw]
+    while (time.time() - t0) < config.STATIC_DURATION:
+        # 1) Gaussian mid-gray noise
+        base = np.random.normal(128, config.STATIC_GAUSS_SIGMA, (small_h, small_w))
+        img  = np.clip(base, 0, 255).astype(np.uint8)[..., None]
+        img  = np.repeat(img, 3, axis=2)
 
-        # blit to screen
-        pygame.surfarray.blit_array(screen, noise_img.swapaxes(0, 1))
+        # 2) Upscale blocks
+        img = np.repeat(np.repeat(img, bs, axis=0), bs, axis=1)[:sh, :sw]
+
+        # 3) Scan-lines
+        img[::2, :] = (img[::2, :] * config.STATIC_SCANLINE_INTENSITY).astype(np.uint8)
+
+        # 4) Horizontal tear
+        band_h = int(sh * config.STATIC_TEAR_BAND_PCT)
+        y0     = np.random.randint(0, sh - band_h)
+        dx     = np.random.randint(-config.STATIC_TEAR_MAX_SHIFT, config.STATIC_TEAR_MAX_SHIFT)
+        img[y0:y0+band_h] = np.roll(img[y0:y0+band_h], dx, axis=1)
+
+        # 5) Brightness flicker
+        flick = np.random.uniform(*config.STATIC_FLICKER_RANGE)
+        img   = np.clip(img * flick, 0, 255).astype(np.uint8)
+
+        # Draw & flip
+        pygame.surfarray.blit_array(screen, img.swapaxes(0, 1))
         pygame.display.flip()
+        pygame.time.delay(16)  # ~60 FPS
 
-        # ~60fps
-        pygame.time.delay(16)
-
-    # stop static sound
     sound.stop()
 
-def fade_transition(screen, old_surface, new_surface, duration=0.5):
+
+def fade_transition(screen, old_surface, new_surface, duration: float = 0.5):
     """
     Fade out from old_surface, then fade in to new_surface.
     """
-    steps = max(1, int(duration * 30))
+    steps  = max(1, int(duration * 30))
+    half_ms = int((duration * 1000) / 2)
+
     # fade out
     for i in range(steps):
         alpha = int(255 * (i / steps))
@@ -90,7 +86,8 @@ def fade_transition(screen, old_surface, new_surface, duration=0.5):
         o.fill((0, 0, 0, alpha))
         screen.blit(o, (0, 0))
         pygame.display.flip()
-        pygame.time.delay(int((duration/2) * 1000 / steps))
+        pygame.time.delay(half_ms // steps)
+
     # fade in
     for i in range(steps):
         alpha = int(255 * (1 - i / steps))
@@ -99,6 +96,7 @@ def fade_transition(screen, old_surface, new_surface, duration=0.5):
         ns.set_alpha(alpha)
         screen.blit(ns, (0, 0))
         pygame.display.flip()
-        pygame.time.delay(int((duration/2) * 1000 / steps))
+        pygame.time.delay(half_ms // steps)
+
     screen.blit(new_surface, (0, 0))
     pygame.display.flip()
