@@ -1,102 +1,79 @@
 # transitions.py
 """
-Transition effects between channels: blocky static noise + low-pass filtered audio,
-or a fade. Parameters are read from config.py so you can tweak them there.
+Transition effects between channels: play random 2 s chunks
+of a pre-rendered static_video.mp4 (video+audio), drawing an
+overlay each frame, and now fading out the static’s audio.
 """
+import os
 import time
-import numpy as np
+import random
+
+import av
 import pygame
+
 import config
+from video_player import VideoPlayer
 
-def static_transition(screen):
+_STATIC_CLIP    = os.path.join(config.MOVIES_PATH, "static_video.mp4")
+_CHUNK_DURATION = 2.0    # seconds of static per transition
+_FADE_OUT_SEC   = 0.01   # fade out static audio over last 0.5 s
+
+def static_transition(screen: pygame.Surface, overlay_fn=None):
     """
-    Display blocky “analog” static for config.STATIC_DURATION seconds
-    and play matching low-pass filtered sound.
+    Play a random 2 s snippet of static_video.mp4, draw overlay_fn each
+    frame on top, then fade the static audio out over the last 0.5 s.
     """
-    # ── Audio setup ─────────────────────────────────────────────
-    sr       = 44100
-    n        = int(sr * config.STATIC_DURATION)
-    white    = np.random.randn(n).astype(np.float32)
+    pygame.mouse.set_visible(False)
 
-    # design one-pole low-pass
-    dt    = 1.0 / sr
-    rc    = 1.0 / (2 * np.pi * config.STATIC_CUTOFF_HZ)
-    alpha = dt / (rc + dt)
+    # ── Probe clip duration ─────────────────────────────────────
+    try:
+        c     = av.open(_STATIC_CLIP)
+        vs    = next(s for s in c.streams if s.type == "video")
+        tb    = vs.time_base
+        total = float((vs.duration or c.duration) * tb)
+        c.close()
+    except:
+        total = 0.0
 
-    filtered = np.empty_like(white)
-    filtered[0] = white[0]
-    for i in range(1, n):
-        filtered[i] = alpha * white[i] + (1 - alpha) * filtered[i-1]
+    # ── Pick random start (so we loop through different snow each time) ──
+    start_off = random.uniform(0, max(0, total - _CHUNK_DURATION))
 
-    # scale & stereo
-    buf16   = np.int16(np.clip(filtered, -1, 1) * (32767 // 4))
-    stereo  = np.repeat(buf16[:, None], 2, axis=1)
-    sound   = pygame.sndarray.make_sound(stereo.copy(order='C'))
-    sound.play(-1)
+    # ── Launch a temporary VideoPlayer for the static snippet ─────────
+    vp = VideoPlayer()
+    vp.open(_STATIC_CLIP, start_offset=start_off)
 
-    # ── Image setup ─────────────────────────────────────────────
-    sw, sh    = screen.get_size()
-    bs        = config.STATIC_BLOCK_SIZE
-    small_w   = (sw + bs - 1) // bs
-    small_h   = (sh + bs - 1) // bs
+    sw, sh = screen.get_size()
+    t_end  = time.time() + _CHUNK_DURATION
+    t_fade = t_end - _FADE_OUT_SEC
 
-    t0 = time.time()
-    while (time.time() - t0) < config.STATIC_DURATION:
-        # 1) Gaussian mid-gray noise
-        base = np.random.normal(128, config.STATIC_GAUSS_SIGMA, (small_h, small_w))
-        img  = np.clip(base, 0, 255).astype(np.uint8)[..., None]
-        img  = np.repeat(img, 3, axis=2)
+    # ── Render loop ───────────────────────────────────────────────
+    while True:
+        now = time.time()
+        if now >= t_end:
+            break
 
-        # 2) Upscale blocks
-        img = np.repeat(np.repeat(img, bs, axis=0), bs, axis=1)[:sh, :sw]
+        # decode & display one frame
+        frame = vp.decode_frame()
+        surf  = pygame.image.frombuffer(frame, (frame.shape[1], frame.shape[0]), "RGB")
+        surf  = pygame.transform.scale(surf, (sw, sh))
+        screen.blit(surf, (0, 0))
 
-        # 3) Scan-lines
-        img[::2, :] = (img[::2, :] * config.STATIC_SCANLINE_INTENSITY).astype(np.uint8)
+        # overlay badge on top
+        if overlay_fn:
+            overlay_fn(screen)
 
-        # 4) Horizontal tear
-        band_h = int(sh * config.STATIC_TEAR_BAND_PCT)
-        y0     = np.random.randint(0, sh - band_h)
-        dx     = np.random.randint(-config.STATIC_TEAR_MAX_SHIFT, config.STATIC_TEAR_MAX_SHIFT)
-        img[y0:y0+band_h] = np.roll(img[y0:y0+band_h], dx, axis=1)
-
-        # 5) Brightness flicker
-        flick = np.random.uniform(*config.STATIC_FLICKER_RANGE)
-        img   = np.clip(img * flick, 0, 255).astype(np.uint8)
-
-        # Draw & flip
-        pygame.surfarray.blit_array(screen, img.swapaxes(0, 1))
         pygame.display.flip()
-        pygame.time.delay(16)  # ~60 FPS
+        pygame.time.delay(16)
 
-    sound.stop()
+        # start fading out static audio when we hit t_fade
+        if now >= t_fade:
+            # linear fade over remaining time
+            remaining = t_end - now
+            # avoid calling fade_out repeatedly
+            if remaining > 0:
+                vp.fade_out(remaining)
+                # clamp so we don't fade again
+                t_fade = float('inf')
 
-
-def fade_transition(screen, old_surface, new_surface, duration: float = 0.5):
-    """
-    Fade out from old_surface, then fade in to new_surface.
-    """
-    steps  = max(1, int(duration * 30))
-    half_ms = int((duration * 1000) / 2)
-
-    # fade out
-    for i in range(steps):
-        alpha = int(255 * (i / steps))
-        screen.blit(old_surface, (0, 0))
-        o = pygame.Surface(screen.get_size(), pygame.SRCALPHA)
-        o.fill((0, 0, 0, alpha))
-        screen.blit(o, (0, 0))
-        pygame.display.flip()
-        pygame.time.delay(half_ms // steps)
-
-    # fade in
-    for i in range(steps):
-        alpha = int(255 * (1 - i / steps))
-        screen.fill((0, 0, 0))
-        ns = new_surface.copy()
-        ns.set_alpha(alpha)
-        screen.blit(ns, (0, 0))
-        pygame.display.flip()
-        pygame.time.delay(half_ms // steps)
-
-    screen.blit(new_surface, (0, 0))
-    pygame.display.flip()
+    # ── Clean up ─────────────────────────────────────────────────
+    vp.close()
