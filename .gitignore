@@ -1,1 +1,3 @@
 /movies/
+*.pyc
+.DS_Store

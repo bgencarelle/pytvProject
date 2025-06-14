@@ -21,7 +21,7 @@ START_CHANNEL = 0x01
 TRANSITION_TYPE = "static"
 
 # ── Overlay durations ────────────────────────────────────────────
-OVERLAY_DURATION      = 4.0   # seconds to show overlay after channel change
+OVERLAY_DURATION      = 1.0   # seconds to show overlay after channel change
 INFO_OVERLAY_DURATION = 5.0   # seconds to show overlay on “i”
 
 # ── Static‐transition defaults (blocky CRT snow + filtered hiss) ──
@@ -32,17 +32,17 @@ STATIC_SCANLINE_INTENSITY = .95
 STATIC_TEAR_BAND_PCT      = 0.10
 STATIC_TEAR_MAX_SHIFT     = 50
 STATIC_FLICKER_RANGE      = (0.99, 1.1)
-STATIC_GAUSS_SIGMA        = 20.0
+STATIC_GAUSS_SIGMA        = 10.0
 # Extra CRT-look knobs (optional)
 STATIC_BLUR_TAPS        = 2     # vertical blur kernel (odd, 3–9 recommended)
 STATIC_PERLINE_JITTER   = 9     # ±pixels to roll each scan-line every frame
 STATIC_VIGNETTE_STRENGTH= 0.01  # 0 = none, 1 = strong dark corners
 STATIC_PERSISTENCE      = 0.1  # 0 = no ghosting, 0.3 = mild phosphor trail
 # Overall brightness gain (1.0 = no change, >1 = brighter)
-STATIC_BRIGHTNESS_GAIN = 1.2
+STATIC_BRIGHTNESS_GAIN = 1.9
 
 # How much to fade in/out the static audio (in seconds)
-STATIC_AUDIO_CROSSFADE = 0.9
+STATIC_AUDIO_CROSSFADE = 0.2
 # ── Static‐movie generator defaults ────────────────────────────
 # Length of the generated loop, in seconds
 STATIC_GEN_DURATION      = 900.0
