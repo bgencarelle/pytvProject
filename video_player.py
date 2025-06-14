@@ -121,8 +121,12 @@ class VideoPlayer:
         # ── Video setup & seek ──────────────────────────────────
         self.container = av.open(filepath)
         self.video_stream = next(s for s in self.container.streams if s.type == "video")
-        ts = int(start_offset / float(self.video_stream.time_base))
-        self.container.seek(ts, any_frame=False, backward=True, stream=self.video_stream)
+        # ► NEW: remember pixel-aspect ratio (float); default 1.0
+        try:
+            sar_ratio = self.video_stream.sample_aspect_ratio  # a Fraction
+            self.sar = float(sar_ratio) if sar_ratio else 1.0
+        except Exception:
+            self.sar = 1.0
 
 
     def decode_frame(self) -> np.ndarray:

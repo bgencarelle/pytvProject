@@ -113,10 +113,18 @@ def main():
         # render frame
         frame = player.decode_frame()
         surf  = pygame.image.frombuffer(frame, frame.shape[1::-1], "RGB")
-        sw,sh = screen.get_size()
-        vw,vh = surf.get_size()
-        scale = min(sw/vw, sh/vh)
-        surf  = pygame.transform.scale(surf, (int(vw*scale), int(vh*scale)))
+        sw, sh = screen.get_size()
+        vw, vh = surf.get_size()
+
+        sar = getattr(player, 'sar', 1.0)  # >1  = pixels are wide, <1 = tall
+        display_w = vw * sar  # how wide it should appear
+
+        scale = min(sw / display_w, sh / vh)
+        scaled_w = int(vw * scale * sar)  # multiply by sar again
+        scaled_h = int(vh * scale)
+
+        surf = pygame.transform.scale(surf, (scaled_w, scaled_h))
+
         screen.fill((0,0,0))
         screen.blit(surf, ((sw-surf.get_width())//2, (sh-surf.get_height())//2))
 
