@@ -121,6 +121,10 @@ class VideoPlayer:
         # ── Video setup & seek ──────────────────────────────────
         self.container = av.open(filepath)
         self.video_stream = next(s for s in self.container.streams if s.type == "video")
+        self.container.seek(
+            int(start_offset / self.video_stream.time_base),
+            any_frame=False, backward=True, stream=self.video_stream
+        )
         # ► NEW: remember pixel-aspect ratio (float); default 1.0
         try:
             sar_ratio = self.video_stream.sample_aspect_ratio  # a Fraction

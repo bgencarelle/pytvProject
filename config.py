@@ -4,6 +4,9 @@ Configuration settings for the TV emulator.
 """
 import datetime
 
+# Minimum real-time gap (s) between accepted channel-change key presses
+CHANNEL_CHANGE_DEBOUNCE = 0.25
+
 # Reference start time (UTC epoch) for synchronized playback
 REFERENCE_START_TIME = datetime.datetime(1978, 11, 17, 7, 11, 0).timestamp()
 
