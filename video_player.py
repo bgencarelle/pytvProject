@@ -48,16 +48,16 @@ class VideoPlayer:
 
     def open(self, filepath: str, start_offset: float = 0.0):
         """Begin playback from `start_offset` seconds (blocks until first frame)."""
-        # stop existing playback
+        # ── stop any running playback ──────────────────────
         self.close()
 
-        # purge stale frames
+        # ── purge stale frames ─────────────────────────────
         while not self._frame_q.empty():
             self._frame_q.get_nowait()
         self._last_frame = None
         self._w = self._h = None
 
-        # set URI and offset
+        # ── set URI & offset ──────────────────────────────
         self._offset = max(0.0, start_offset)
         self.player.set_property("uri", Gst.filename_to_uri(filepath))
 
@@ -72,12 +72,39 @@ class VideoPlayer:
             err, dbg = msg.parse_error()
             raise RuntimeError(f"GStreamer preroll error: {err}")
 
-        # 2) read negotiated width/height
-        pad  = self.video_sink.get_static_pad("sink")
-        caps = pad.get_current_caps()
-        struct = caps.get_structure(0)
-        self._w = struct.get_int("width")[1]
-        self._h = struct.get_int("height")[1]
+        # 2) read negotiated width/height and pixel-aspect
+        pad = self.video_sink.get_static_pad("sink")
+        caps = pad.get_current_caps().get_structure(0)
+
+        # dimensions
+        self._w = caps.get_int("width")[1]
+        self._h = caps.get_int("height")[1]
+
+        # extract aspect numerator/denominator
+        def _read_frac(field):
+            try:
+                frac = caps.get_fraction(field)
+            except Exception:
+                return 1, 1
+            # get_fraction may return (ok, num, den) or (num, den)
+            if isinstance(frac, tuple):
+                if len(frac) == 3:
+                    _, num, den = frac
+                elif len(frac) == 2:
+                    num, den = frac
+                else:
+                    return 1, 1
+                return num, den
+            return 1, 1
+
+        if caps.has_field("pixel-aspect-ratio"):
+            num, den = _read_frac("pixel-aspect-ratio")
+        elif caps.has_field("display-aspect-ratio"):
+            num, den = _read_frac("display-aspect-ratio")
+        else:
+            num, den = 1, 1
+
+        self.sar = (num / den) if den else 1.0
 
         # 3) seek if requested
         if self._offset > 0:
@@ -129,7 +156,6 @@ class VideoPlayer:
         except queue.Empty:
             pass
         return self._last_frame
-
     def fade_out(self, duration: float = 0.1):
         pass
 
