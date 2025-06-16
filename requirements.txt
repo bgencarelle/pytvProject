@@ -3,3 +3,5 @@ numpy
 av
 python-vlc
 pyaudio
+pygobject-stubs
+pygobject

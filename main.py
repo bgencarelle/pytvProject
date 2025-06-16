@@ -34,6 +34,7 @@ def draw_overlay(surface: pygame.Surface, channel: int, seconds: float):
 def main():
     pygame.init()
     pygame.mixer.init(frequency=44100, channels=2, size=-16)
+    pygame.mouse.set_visible(True)
     pygame.mouse.set_visible(False)
 
     screen = (pygame.display.set_mode((0,0), pygame.FULLSCREEN)
@@ -77,6 +78,7 @@ def main():
     running = True
     while running:
         for ev in pygame.event.get():
+            pygame.mouse.set_visible(False)
             if ev.type == pygame.QUIT:
                 running = False
             elif ev.type == pygame.KEYDOWN:

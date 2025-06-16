@@ -24,8 +24,8 @@ START_CHANNEL = 0x01
 TRANSITION_TYPE = "static"
 
 # ── Overlay durations ────────────────────────────────────────────
-OVERLAY_DURATION      = 1.0   # seconds to show overlay after channel change
-INFO_OVERLAY_DURATION = 5.0   # seconds to show overlay on “i”
+OVERLAY_DURATION      = 4.0   # seconds to show overlay after channel change
+INFO_OVERLAY_DURATION = 8.0   # seconds to show overlay on “i”
 
 # ── Static‐transition defaults (blocky CRT snow + filtered hiss) ──
 STATIC_DURATION           = 1.5

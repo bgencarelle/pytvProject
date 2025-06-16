@@ -15,7 +15,7 @@ import config
 from video_player import VideoPlayer
 
 _STATIC_CLIP    = os.path.join(config.MOVIES_PATH, "static_video.mp4")
-_CHUNK_DURATION = 2.0    # seconds of static per transition
+_CHUNK_DURATION = 1.0    # seconds of static per transition
 _FADE_OUT_SEC   = 0.01   # fade out static audio over last 0.5 s
 
 def static_transition(screen: pygame.Surface, overlay_fn=None):
