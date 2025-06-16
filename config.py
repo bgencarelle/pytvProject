@@ -4,6 +4,8 @@ Configuration settings for the TV emulator.
 """
 import datetime
 
+FPS = 30
+
 # Minimum real-time gap (s) between accepted channel-change key presses
 CHANNEL_CHANGE_DEBOUNCE = 0.25
 
