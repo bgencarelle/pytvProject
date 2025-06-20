@@ -6,13 +6,13 @@ import datetime
 # config.py
 import time
 FPS   = 30
-IPS = FPS
+IPS = 1000
 
 EPOCH = time.time()          # single constant
 
 # ── Basic Application Settings ──────────────────────────────────────────────
 
-SHOW_OVERLAYS = True
+SHOW_OVERLAYS = False
 
 # Path to directory containing video channel files
 MOVIES_PATH = "movies"

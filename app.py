@@ -9,7 +9,7 @@ from renderer        import render_frame
 from gi.repository   import Gst
 from timing import wall_clock
 
-DRIFT_OK = 0.02   # seconds considered “in-sync”
+DRIFT_OK = 0.003   # seconds considered “in-sync”
 
 class TVEmulator:
     # ---------------------------------------------------------------- init
@@ -71,8 +71,9 @@ class TVEmulator:
         if not chan or not chan.files:
             off = ((when - self.ref_time) % self.static_len) if self.static_len else 0.0
             return self.static_fp, off
-        off = self.ch_mgr.offset(ch, self.ref_time + wall_clock(), self.ref_time)
 
+        # use *real* UTC wall clock (seconds since 1970), nothing added twice
+        off = self.ch_mgr.offset(ch, time.time(), self.ref_time)
         return chan.path, off
 
     def _open_channel(self, ch: int):
