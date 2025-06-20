@@ -3,10 +3,15 @@
 Configuration settings for the TV emulator.
 """
 import datetime
+# config.py
+import time
+FPS   = 30
+IPS = FPS
+
+EPOCH = time.time()          # single constant
 
 # ── Basic Application Settings ──────────────────────────────────────────────
 
-FPS = 30
 SHOW_OVERLAYS = True
 
 # Path to directory containing video channel files
@@ -16,10 +21,10 @@ MOVIES_PATH = "movies"
 REFERENCE_START_TIME = datetime.datetime(1978, 11, 17, 7, 11, 0).timestamp()
 
 # Starting channel: None means the lowest channel
-START_CHANNEL = 0x01
+START_CHANNEL = 0x00
 
 # Minimum real-time gap (s) between accepted channel-change key presses
-CHANNEL_CHANGE_DEBOUNCE = 0.25
+CHANNEL_CHANGE_DEBOUNCE = 0.35
 
 # Display settings
 FULLSCREEN = True
@@ -35,7 +40,7 @@ INFO_OVERLAY_DURATION = 8.0   # seconds to show overlay on “i”
 
 # ── Static‐transition defaults (blocky CRT snow + filtered hiss) ───────────
 
-STATIC_DURATION           = 0.95
+STATIC_BURST_SEC           = .06
 STATIC_BLOCK_SIZE         = 1
 STATIC_CUTOFF_HZ          = 2000.0
 STATIC_SCANLINE_INTENSITY = 0.95

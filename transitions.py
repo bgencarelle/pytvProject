@@ -11,33 +11,32 @@ import random
 import av
 import pygame
 
-from config import _CHUNK_DURATION, _FADE_OUT_SEC, MOVIES_PATH
+from config import _CHUNK_DURATION, _FADE_OUT_SEC, MOVIES_PATH,FPS
 from video_player import VideoPlayer
 
 
 _STATIC_CLIP    = os.path.join(MOVIES_PATH, "static_video.mp4")
 
-def static_transition(screen: pygame.Surface, overlay_fn=None):
+def static_transition(screen: pygame.Surface, overlay_fn=None, clock=None):
     """
-    Play a random 2 s snippet of static_video.mp4, draw overlay_fn each
-    frame on top, then fade the static audio out over the last 0.5 s.
+    Play a random `_CHUNK_DURATION` snippet of static_video.mp4,
+    draw `overlay_fn` on top, fade audio, then return.
     """
+    pygame.mouse.set_visible(True)
     pygame.mouse.set_visible(False)
+    clock = clock or pygame.time.Clock()      # use main clock if caller passes it
 
-    # ── Probe clip duration ─────────────────────────────────────
+    # ── clip duration & random start ────────────────────────────
+    total = 0.0
     try:
-        c     = av.open(_STATIC_CLIP)
-        vs    = next(s for s in c.streams if s.type == "video")
-        tb    = vs.time_base
-        total = float((vs.duration or c.duration) * tb)
-        c.close()
-    except:
-        total = 0.0
+        with av.open(_STATIC_CLIP) as c:
+            v = next(s for s in c.streams if s.type == "video")
+            total = float((v.duration or c.duration) * v.time_base)
+    except Exception:
+        pass
+    start_off = random.uniform(0.0, max(0.0, total - _CHUNK_DURATION))
 
-    # ── Pick random start (so we loop through different snow each time) ──
-    start_off = random.uniform(0, max(0, total - _CHUNK_DURATION))
-
-    # ── Launch a temporary VideoPlayer for the static snippet ─────────
+    # ── temp player ─────────────────────────────────────────────
     vp = VideoPlayer()
     vp.open(_STATIC_CLIP, start_offset=start_off)
 
@@ -45,34 +44,22 @@ def static_transition(screen: pygame.Surface, overlay_fn=None):
     t_end  = time.time() + _CHUNK_DURATION
     t_fade = t_end - _FADE_OUT_SEC
 
-    # ── Render loop ───────────────────────────────────────────────
-    while True:
-        now = time.time()
-        if now >= t_end:
-            break
-
-        # decode & display one frame
+    # ── render loop ─────────────────────────────────────────────
+    while (now := time.time()) < t_end:
         frame = vp.decode_frame()
-        surf  = pygame.image.frombuffer(frame, (frame.shape[1], frame.shape[0]), "RGB")
-        surf  = pygame.transform.scale(surf, (sw, sh))
+        surf  = pygame.transform.scale(
+                    pygame.image.frombuffer(frame, frame.shape[1::-1], "RGB"),
+                    (sw, sh))
         screen.blit(surf, (0, 0))
 
-        # overlay badge on top
         if overlay_fn:
             overlay_fn(screen)
 
         pygame.display.flip()
-        pygame.time.delay(16)
+        clock.tick(FPS)               # ← replaces delay(16)
 
-        # start fading out static audio when we hit t_fade
         if now >= t_fade:
-            # linear fade over remaining time
-            remaining = t_end - now
-            # avoid calling fade_out repeatedly
-            if remaining > 0:
-                vp.fade_out(remaining)
-                # clamp so we don't fade again
-                t_fade = float('inf')
+            vp.fade_out(t_end - now)
+            t_fade = float("inf")
 
-    # ── Clean up ─────────────────────────────────────────────────
     vp.close()

@@ -1,138 +1,134 @@
-"""
-Draws on-screen overlays: channel label (always),
-plus timestamp, CPU usage, and real+run time (when enabled).
-Font sizes scale relative to the screen height.
-Positions and margins are declared at the top.
-"""
-import pygame
-import os
-import time
-import config  # for SHOW_OVERLAYS
+# =========  overlays.py  =========
+import os, time, pygame, config
+
+# fallbacks
+if not hasattr(config, "SHOW_OVERLAYS"):
+    config.SHOW_OVERLAYS = False
+if not hasattr(config, "STATIC_BURST_SEC"):
+    config.STATIC_BURST_SEC = 0.50
 
 pygame.font.init()
 
-# Margins (in pixels) for overlay placement
-CHANNEL_MARGIN_X     = 10  # from right edge for channel label
-CHANNEL_MARGIN_Y     = 10  # from top edge for channel label
-TIMESTAMP_MARGIN_X   = 10  # from right edge for video timestamp
-TIMESTAMP_MARGIN_Y   = 10  # from bottom edge for video timestamp
-CPU_MARGIN_X         = 10  # from left edge for CPU usage
-CPU_MARGIN_Y         = 10  # from bottom edge for CPU usage
-REALTIME_MARGIN_X    = 10  # from left edge for real+run time
-REALTIME_MARGIN_Y    = 10  # from top edge for real+run time
+# ---------------------------------------------------------------- helpers
+def _compute_font_sizes(h):
+    return max(12, h // 60), max(16, h // 45), max(24, h // 15)
 
-def _compute_font_sizes(screen_height: int):
-    # Base divisor values tuned for 1080p reference
-    ts_size = max(12, screen_height // 45)
-    ch_size = max(18, screen_height // 15)
-    return ts_size, ch_size
+def _fmt_hms(sec: float) -> str:
+    m, s = divmod(int(sec + 0.5), 60)
+    h, m = divmod(m, 60)
+    return f"{h:02d}:{m:02d}:{s:02d}"
 
-def draw_overlay(surface: pygame.Surface, channel: int, seconds: float):
-    sh = surface.get_height()
-    sw = surface.get_width()
-    ts_size, ch_size = _compute_font_sizes(sh)
-    ts_font = pygame.font.Font(None, ts_size)
-    ch_font = pygame.font.Font(None, ch_size)
+def _fmt_hmsf(sec: float, fps: int) -> str:
+    """
+    HH:MM:SS:FF where FF = frame number within the second (00 … fps-1)
+    """
+    total_frames = int(sec * fps + 0.0001)       # guard rounding error
+    frames = total_frames % fps
+    s_int  = total_frames // fps
+    m, s   = divmod(s_int, 60)
+    h, m   = divmod(m, 60)
+    return f"{h:02d}:{m:02d}:{s:02d}:{frames:02d}"
 
-    # --- Channel label (always drawn, top-right) ---
-    ch_text = f"CH {channel:02d}"
-    ch_surf = ch_font.render(ch_text, True, (0,255,0))
-    ch_bg = pygame.Surface((ch_surf.get_width() + ch_size//3,
-                            ch_surf.get_height() + ch_size//5),
-                           pygame.SRCALPHA)
-    ch_bg.fill((0,0,0,128))
-    ch_bg.blit(ch_surf, (ch_size//6, ch_size//10))
-    x_ch = sw - ch_bg.get_width() - CHANNEL_MARGIN_X
-    y_ch = CHANNEL_MARGIN_Y
-    surface.blit(ch_bg, (x_ch, y_ch))
+# ---------------------------------------------------------------- main
+def draw_overlay(surface, ch_num, ch_mgr, ref_time, static_elapsed, transitioning):
+    sw, sh = surface.get_width(), surface.get_height()
+    tiny, small, large = _compute_font_sizes(sh)
+    FT, FS, FL = (pygame.font.SysFont("monospace", sz) for sz in (tiny, small, large))
+
+    WHITE = (255, 255, 255); GREEN = (0, 255, 0)
+    RED   = (255, 50, 50);   YEL   = (200, 200, 50)
+    BG    = (0, 0, 0, 180)
+
+    # ---------- channel label (always) ----------
+    chsurf = FL.render(f"CH {ch_num:02d}", True, GREEN)
+    chbg   = pygame.Surface((chsurf.get_width()+large//3,
+                             chsurf.get_height()+large//5),
+                            pygame.SRCALPHA); chbg.fill(BG)
+    chbg.blit(chsurf, (large//6, large//10))
+    surface.blit(chbg, (sw - chbg.get_width() - 10, 10))
 
     if not config.SHOW_OVERLAYS:
         return
 
-    # --- Video timestamp (bottom-right) ---
-    mm, ss = divmod(int(seconds), 60)
-    ts_text = f"{mm:02d}:{ss:02d}"
-    ts_surf = ts_font.render(ts_text, True, (255,255,255))
-    ts_bg = pygame.Surface((ts_surf.get_width() + ts_size//3,
-                            ts_surf.get_height() + ts_size//5),
-                           pygame.SRCALPHA)
-    ts_bg.fill((0,0,0,128))
-    ts_bg.blit(ts_surf, (ts_size//6, ts_size//10))
-    x_ts = sw - ts_bg.get_width() - TIMESTAMP_MARGIN_X
-    y_ts = sh - ts_bg.get_height() - TIMESTAMP_MARGIN_Y
-    surface.blit(ts_bg, (x_ts, y_ts))
+    now = time.time()
 
-    # --- CPU usage (bottom-left) ---
+    # ---------- real clock + run time ----------
+    rt = time.strftime("%H:%M:%S")
+    run_sec = pygame.time.get_ticks() // 1000
+    rm, rs = divmod(run_sec, 60)
+    clocksurf = FS.render(f"{rt}  +{rm:02d}:{rs:02d}", True, YEL)
+    clockbg   = pygame.Surface((clocksurf.get_width()+small//3,
+                                clocksurf.get_height()+small//5),
+                               pygame.SRCALPHA); clockbg.fill(BG)
+    clockbg.blit(clocksurf, (small//6, small//10))
+    surface.blit(clockbg, (10, 10))
+
+    # ---------- CPU load ----------
     try:
-        load1, _, _ = os.getloadavg()
-        cpu_pct = (load1 / os.cpu_count()) * 100
+        cpu_pct = (os.getloadavg()[0] / os.cpu_count()) * 100
     except Exception:
         cpu_pct = 0.0
-    cpu_text = f"CPU {cpu_pct:.0f}%"
-    cpu_surf = ts_font.render(cpu_text, True, (255,50,50))
-    cpu_bg = pygame.Surface((cpu_surf.get_width() + ts_size//3,
-                             cpu_surf.get_height() + ts_size//5),
-                            pygame.SRCALPHA)
-    cpu_bg.fill((0,0,0,128))
-    cpu_bg.blit(cpu_surf, (ts_size//6, ts_size//10))
-    x_cpu = CPU_MARGIN_X
-    y_cpu = sh - cpu_bg.get_height() - CPU_MARGIN_Y
-    surface.blit(cpu_bg, (x_cpu, y_cpu))
+    cpusurf = FS.render(f"CPU {cpu_pct:.0f}%", True, RED)
+    cpubg   = pygame.Surface((cpusurf.get_width()+small//3,
+                              cpusurf.get_height()+small//5),
+                             pygame.SRCALPHA); cpubg.fill(BG)
+    cpubg.blit(cpusurf, (small//6, small//10))
+    surface.blit(cpubg, (10, sh - cpubg.get_height() - 10))
 
-    # --- Real time + run time (upper-left) ---
-    now_str = time.strftime("%H:%M:%S")
-    run_sec = pygame.time.get_ticks() // 1000
-    rm, rs = divmod(int(run_sec), 60)
-    rt_text = f"{now_str} +{rm:02d}:{rs:02d}"
-    rt_surf = ts_font.render(rt_text, True, (200,200,50))
-    rt_bg = pygame.Surface((rt_surf.get_width() + ts_size//3,
-                            rt_surf.get_height() + ts_size//5),
-                           pygame.SRCALPHA)
-    rt_bg.fill((0,0,0,128))
-    rt_bg.blit(rt_surf, (ts_size//6, ts_size//10))
-    x_rt = REALTIME_MARGIN_X
-    y_rt = REALTIME_MARGIN_Y
-    surface.blit(rt_bg, (x_rt, y_rt))
+    # ---------- playlist panel ----------
+    chan = ch_mgr.channels.get(ch_num)
+    lines = []
+    if chan and chan.files:
+        pin = (now - ref_time) % chan.total_duration
+        lines += [f"Playlist len  {_fmt_hms(chan.total_duration)}",
+                  f"Position      {_fmt_hms(pin)}"]
 
+        off = ch_mgr.offset(ch_num, now, ref_time)
+        cur_idx = chan.files.index(chan.path)
+        cur_fp  = os.path.basename(chan.path)
+        cur_len = chan.durations[cur_idx]
+        remain  = cur_len - off
+        nxt_fp  = os.path.basename(chan.files[(cur_idx + 1) % len(chan.files)])
 
-def draw_timestamp(screen: pygame.Surface, secs: float):
-    if not config.SHOW_OVERLAYS:
-        return
-    pygame.mouse.set_visible(False)
+        lines += [f"Current  {cur_fp}",
+                  f"   rem   {_fmt_hms(remain)}",
+                  f"Next    {nxt_fp}",
+                  "——  upcoming  ——"]
 
-    sh = screen.get_height()
-    sw = screen.get_width()
-    ts_size, _ = _compute_font_sizes(sh)
-    ts_font = pygame.font.Font(None, ts_size)
+        cum = 0.0
+        for fp, dur in zip(chan.files, chan.durations):
+            start = cum; cum += dur
+            until = start - pin if start >= pin else chan.total_duration - pin + start
+            lines.append(f"{os.path.basename(fp)}  in {_fmt_hms(until)}")
+    else:
+        lines.append("No videos – static loop")
 
-    mm, ss = divmod(int(secs), 60)
-    txt = f"{mm:02d}:{ss:02d}"
-    surf = ts_font.render(txt, True, (255,255,255))
-    r = surf.get_rect(bottomright=(sw - TIMESTAMP_MARGIN_X,
-                                   sh - TIMESTAMP_MARGIN_Y))
-    bg = pygame.Surface((r.width + ts_size//3,
-                         r.height + ts_size//5),
-                        pygame.SRCALPHA)
-    bg.fill((0,0,0,128))
-    bg.blit(surf, (ts_size//6, ts_size//10))
-    screen.blit(bg, r.topleft)
+    if transitioning:
+        lines.append(f"Static burst {_fmt_hms(static_elapsed)} / "
+                     f"{_fmt_hms(config.STATIC_BURST_SEC)}")
 
+    # panel rendering
+    widest = max(FT.size(l)[0] for l in lines)
+    ph     = len(lines) * (FT.get_linesize() + 2) + 10
+    pbg    = pygame.Surface((widest + 20, ph), pygame.SRCALPHA); pbg.fill(BG)
+    y = 5
+    for l in lines:
+        pbg.blit(FT.render(l, True, WHITE), (10, y))
+        y += FT.get_linesize() + 2
+    surface.blit(pbg, (sw - pbg.get_width() - 10, 10 + chbg.get_height() + 10))
 
-def draw_channel(screen: pygame.Surface, ch: int):
-    # channel label always drawn (same position as in draw_overlay)
-    pygame.mouse.set_visible(False)
+    # ---------- timestamp bottom-right ----------
+    if transitioning:
+        ttxt = f"{static_elapsed:04.1f}s"
+    else:
+        # show HH:MM:SS:FF (frame number) for current video
+        ttxt = _fmt_hmsf(off if chan and chan.files else static_elapsed,
+                         config.FPS)
 
-    sh = screen.get_height()
-    _, ch_size = _compute_font_sizes(sh)
-    ch_font = pygame.font.Font(None, ch_size)
-
-    txt = f"CH {ch:02d}"
-    surf = ch_font.render(txt, True, (0,255,0))
-    r = surf.get_rect(topright=(screen.get_width() - CHANNEL_MARGIN_X,
-                                CHANNEL_MARGIN_Y))
-    bg = pygame.Surface((r.width + ch_size//3,
-                         r.height + ch_size//5),
-                        pygame.SRCALPHA)
-    bg.fill((0,0,0,128))
-    bg.blit(surf, (ch_size//6, ch_size//10))
-    screen.blit(bg, r.topleft)
+    tssurf = FS.render(ttxt, True, WHITE)
+    tsbg   = pygame.Surface((tssurf.get_width()+small//3,
+                             tssurf.get_height()+small//5),
+                            pygame.SRCALPHA); tsbg.fill(BG)
+    tsbg.blit(tssurf, (small//6, small//10))
+    surface.blit(tsbg, (sw - tsbg.get_width() - 10,
+                        sh - tsbg.get_height() - 10))
