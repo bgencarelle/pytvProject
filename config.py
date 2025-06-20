@@ -12,7 +12,7 @@ EPOCH = time.time()          # single constant
 
 # ── Basic Application Settings ──────────────────────────────────────────────
 
-SHOW_OVERLAYS = False
+SHOW_OVERLAYS = True
 
 # Path to directory containing video channel files
 MOVIES_PATH = "movies"
