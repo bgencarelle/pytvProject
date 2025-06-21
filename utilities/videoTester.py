@@ -54,7 +54,7 @@ def make_frame(t):
         w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
         x = (WIDTH - w) / 2
         y = yc - h / 2
-        draw.text((x, y), text, font=font, fill=(0, 255, 0))
+        draw.text((x, y), text, font=font, fill=(0, 255, 255))
 
     return np.array(img)
 

@@ -118,7 +118,8 @@ class VideoPlayer:
 
     def _on_bus_msg(self, bus, msg):
         if msg.type == Gst.MessageType.EOS:
-            self.seek_to(0.0)
+           # self.seek_to(0.0)
+            return
         elif msg.type == Gst.MessageType.ERROR:
             print("GStreamer error:", *msg.parse_error()); self.close()
         return True

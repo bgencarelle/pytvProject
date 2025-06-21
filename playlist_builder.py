@@ -1,95 +1,81 @@
 #!/usr/bin/env python3
 """
-playlist_builder.py
--------------------
-One-shot cache generator for the fake-television emulator.
+playlist_builder.py – pause-card aware
 
-• Walks MOVIES_PATH (from config.py, default “movies/”).
-• Finds sub-directories matching  chan_<n>  (n = integer channel number).
-• Probes every playable video in each channel folder via PyAV.
-• Writes  playlist.json  with:
-      {
-        "files":        ["file1.mp4", ...]             # basenames
-        "durations_us": [297654321, ...]              # micro-seconds
-        "start_us":     [0, 297654321, ...]           # cumulative start times
-        "total_us":     592004444                     # sum of durations_us
-      }
-  These keys are exactly what `channel_manager.py` expects.
-
-Run from the project root:
-
-    $ python playlist_builder.py
-    or
-    $ python playlist_builder.py /custom/path/to/movies
+• Adds a 3-second pause sentinel (“__PAUSE__”) after every movie and after the
+  last one.  If `config.SINGLE_VID_PAUSE` is True, single-clip channels get
+  the pause too.
+• Can be run as a script **or** imported and called via
+      build_all_playlists(path=None)
 """
 
 from __future__ import annotations
-
-import argparse
-import json
-import os
-import re
-import sys
+import argparse, json, os, re, sys
 from typing import List, Tuple
 
-import av  # PyAV – thin FFmpeg bindings
+import av                               # PyAV
+import config
 
-# ── constants ───────────────────────────────────────────────────────────────
-CHAN_RE = re.compile(r"^chan_(\d+)$", re.IGNORECASE)
-VIDEO_RE = re.compile(r"\.(mkv|mp4|mov|avi|webm|flv)$", re.IGNORECASE)
+# ── constants ──────────────────────────────────────────────────────────────
+CHAN_RE        = re.compile(r"^chan_(\d+)$", re.IGNORECASE)
+VIDEO_RE       = re.compile(r"\.(mkv|mp4|mov|avi|webm|flv)$", re.IGNORECASE)
+PAUSE_SENTINEL = "__PAUSE__"
+PAUSE_US       = 3_000_000              # 3-second nominal gap
 
-# ── helpers ─────────────────────────────────────────────────────────────────
-def probe_duration_us(fp: str) -> int:
-    """Return clip length in micro-seconds or 0 if unknown/unreadable."""
+
+# ── low-level helpers ──────────────────────────────────────────────────────
+def _probe_duration_us(fp: str) -> int:
     try:
         with av.open(fp) as c:
-            stream = next((s for s in c.streams if s.type == "video"), None)
-            if stream and stream.duration:                          # in stream time-base
-                length = stream.duration * stream.time_base
-            elif c.duration:                                        # container field
-                length = c.duration / av.time_base
-            else:
-                return 0
-            return max(0, int(length * 1_000_000))
+            s   = next((s for s in c.streams if s.type == "video"), None)
+            dur = (
+                s.duration * s.time_base if s and s.duration
+                else c.duration / av.time_base if c.duration else 0
+            )
+            return max(0, int(dur * 1_000_000))
     except Exception:
         return 0
 
 
-def build_playlist(dir_path: str) -> Tuple[List[str], List[int]]:
-    """Return (files, durations_us) for a channel directory; empty lists on failure."""
-    files: List[str] = []
-    durations: List[int] = []
-
+def _build_channel(dir_path: str) -> Tuple[List[str], List[int]]:
+    """Return (files, durations_us) including pause sentinels."""
+    files, durs = [], []
     for name in sorted(os.listdir(dir_path)):
-        if not VIDEO_RE.search(name):
-            continue
-        fp = os.path.join(dir_path, name)
-        if not os.path.isfile(fp):
-            continue
-        dur_us = probe_duration_us(fp)
-        if dur_us:
-            files.append(name)       # store basenames only (relative inside channel)
-            durations.append(dur_us)
+        if VIDEO_RE.search(name):
+            fp = os.path.join(dir_path, name)
+            if os.path.isfile(fp):
+                dur = _probe_duration_us(fp)
+                if dur:
+                    files.append(name)
+                    durs.append(dur)
 
-    return files, durations
+    add_pause = len(files) > 1 or getattr(config, "SINGLE_VID_PAUSE", False)
+    if not add_pause:
+        return files, durs
+
+    out_f, out_d = [], []
+    for fn, dur in zip(files, durs):
+        out_f.extend([fn, PAUSE_SENTINEL])
+        out_d.extend([dur, PAUSE_US])
+
+    return out_f, out_d
 
 
-def write_cache(dir_path: str, files: List[str], durations: List[int]) -> None:
-    """Write playlist.json in *dir_path* (best effort)."""
+def _write_playlist(dir_path: str, files: List[str], durs: List[int]) -> None:
     if not files:
-        print(f"  └─ No playable videos in {os.path.basename(dir_path)} – skipping.")
+        print(f"  └─ No playable videos in {os.path.basename(dir_path)} – skipped")
         return
 
     start_us = [0]
-    for d in durations[:-1]:
+    for d in durs[:-1]:
         start_us.append(start_us[-1] + d)
-    total_us = start_us[-1] + durations[-1]
+    total_us = start_us[-1] + durs[-1]
 
     data = {
-        "files": files,
-        "durations_us": durations,
-        "start_us": start_us,
-        "total_us": total_us,
+        "files":        files,
+        "durations_us": durs,
+        "start_us":     start_us,
+        "total_us":     total_us,
     }
 
     out_fp = os.path.join(dir_path, "playlist.json")
@@ -101,45 +87,43 @@ def write_cache(dir_path: str, files: List[str], durations: List[int]) -> None:
         print(f"  └─ ERROR writing {out_fp}: {exc}", file=sys.stderr)
 
 
-# ── main ─────────────────────────────────────────────────────────────────────
-def main(root: str):
-    root = os.path.abspath(root)
+# ── public API ─────────────────────────────────────────────────────────────
+def build_all_playlists(root: str | None = None) -> None:
+    """
+    Build / refresh playlist.json in every chan_<n> folder under *root*.
+
+    Parameters
+    ----------
+    root : str | None
+        Root directory that contains the channel sub-folders.
+        Defaults to config.MOVIES_PATH.
+    """
+    root = os.path.abspath(root or getattr(config, "MOVIES_PATH", "movies"))
     if not os.path.isdir(root):
         sys.exit(f"Movies path not found: {root}")
 
     print(f"Scanning {root}")
-
-    for entry in os.scandir(root):
-        if not entry.is_dir():
-            continue
-        m = CHAN_RE.match(entry.name)
-        if not m:
-            continue
-
-        ch_num = int(m.group(1))
-        dir_path = entry.path
-        print(f"· Channel {ch_num:02d}  ({dir_path})")
-        files, durations = build_playlist(dir_path)
-        write_cache(dir_path, files, durations)
+    for ent in os.scandir(root):
+        if ent.is_dir() and CHAN_RE.match(ent.name):
+            ch = int(CHAN_RE.match(ent.name).group(1))
+            print(f"· Channel {ch:02d} ({ent.path})")
+            files, durs = _build_channel(ent.path)
+            _write_playlist(ent.path, files, durs)
 
 
-if __name__ == "__main__":
+# ── CLI entry-point ────────────────────────────────────────────────────────
+def _cli() -> None:
     ap = argparse.ArgumentParser(description="Generate playlist.json caches.")
     ap.add_argument(
         "movies_path",
         nargs="?",
         default=None,
-        help="Root directory containing chan_<n> folders (defaults to config.MOVIES_PATH).",
+        help="Root dir containing chan_<n> folders "
+             "(defaults to config.MOVIES_PATH)",
     )
     args = ap.parse_args()
+    build_all_playlists(args.movies_path)
 
-    # Lazy-import config only when we need its default path
-    if args.movies_path is None:
-        try:
-            import config
 
-            args.movies_path = getattr(config, "MOVIES_PATH", "movies")
-        except Exception:
-            args.movies_path = "movies"
-
-    main(args.movies_path)
+if __name__ == "__main__":
+    _cli()

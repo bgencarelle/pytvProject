@@ -6,9 +6,10 @@ import datetime
 # config.py
 import time
 FPS   = 30
-IPS = 1000
 
 EPOCH = time.time()          # single constant
+SINGLE_VID_PAUSE = True
+RUN_PLAYLIST_BUILDER = True
 
 # ── Basic Application Settings ──────────────────────────────────────────────
 
