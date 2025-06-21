@@ -163,17 +163,28 @@ class TVEmulator:
                              args=(dest, self.tid, dest_off),
                              daemon=True).start()
 
+    # --- inside _loader() ---------------------------------------------------
     def _loader(self, dest_ch: int, tid_tag: int, off: float):
         vp = VideoPlayer()
         try:
-            vp.open(self.dest_path, off); vp.set_volume(0.0)
-        except Exception: return
+            vp.open(self.dest_path, off)
+            vp.set_volume(0.0)
+            vp.player.set_state(Gst.State.PAUSED)  # <<< freeze immediately
+        except Exception:
+            return
 
-        reveal_ts = max(self.static_start + self.min_static, time.time() + 0.05)
-        time.sleep(max(0, reveal_ts - time.time()))
+        reveal_ts = self.static_start + self.min_static  # no extra +50 ms
+        time_to_go = reveal_ts - time.time()
+        if time_to_go > 0:
+            time.sleep(time_to_go)
 
-        if tid_tag == self.tid: self.tmp_vp = vp
-        else: vp.close()
+        # start the clock exactly on cue
+        vp.player.set_state(Gst.State.PLAYING)
+
+        if tid_tag == self.tid:
+            self.tmp_vp = vp
+        else:
+            vp.close()
 
     def _maybe_finish_static(self):
         if self.phase != "static": return
