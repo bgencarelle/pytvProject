@@ -1,133 +1,145 @@
+#!/usr/bin/env python3
 """
-playlist_builder.py  – one-shot playlist cache creator
-Adds µ-second timeline fields required by the revised ChannelManager.
-Old fields stay intact.
+playlist_builder.py
+-------------------
+One-shot cache generator for the fake-television emulator.
+
+• Walks MOVIES_PATH (from config.py, default “movies/”).
+• Finds sub-directories matching  chan_<n>  (n = integer channel number).
+• Probes every playable video in each channel folder via PyAV.
+• Writes  playlist.json  with:
+      {
+        "files":        ["file1.mp4", ...]             # basenames
+        "durations_us": [297654321, ...]              # micro-seconds
+        "start_us":     [0, 297654321, ...]           # cumulative start times
+        "total_us":     592004444                     # sum of durations_us
+      }
+  These keys are exactly what `channel_manager.py` expects.
+
+Run from the project root:
+
+    $ python playlist_builder.py
+    or
+    $ python playlist_builder.py /custom/path/to/movies
 """
+
 from __future__ import annotations
-import os, re, json, time, av, typing as _t, pathlib
 
-TICK_HZ = 1_000_000                         # 1 tick = 1 µs
+import argparse
+import json
+import os
+import re
+import sys
+from typing import List, Tuple
 
-# ---------- natural sort --------------------------------------------------
-def _nat_key(s: str) -> list[_t.Union[int, str]]:
-    return [int(t) if t.isdigit() else t.lower()
-            for t in re.split(r"(\d+)", s)]
+import av  # PyAV – thin FFmpeg bindings
 
-# ---------- probe ---------------------------------------------------------
-def _probe(fp: str) -> tuple[float, int, float]:
-    """
-    Return (seconds, frames, fps) – frames > 0 on success.
-    Final fallback: decode to last frame PTS.
-    """
+# ── constants ───────────────────────────────────────────────────────────────
+CHAN_RE = re.compile(r"^chan_(\d+)$", re.IGNORECASE)
+VIDEO_RE = re.compile(r"\.(mkv|mp4|mov|avi|webm|flv)$", re.IGNORECASE)
+
+# ── helpers ─────────────────────────────────────────────────────────────────
+def probe_duration_us(fp: str) -> int:
+    """Return clip length in micro-seconds or 0 if unknown/unreadable."""
     try:
         with av.open(fp) as c:
-            vs = next((s for s in c.streams if s.type == "video"), None)
-            if not vs:
-                return 0.0, 0, 0.0
-
-            if vs.frames and vs.average_rate:                     # meta
-                dur = vs.frames / float(vs.average_rate)
-                return dur, vs.frames, float(vs.average_rate)
-
-            if vs.duration and vs.time_base:
-                dur = float(vs.duration * vs.time_base)
-                if vs.average_rate:
-                    fps = float(vs.average_rate)
-                    frm = int(round(dur * fps))
-                    return dur, frm, fps
-
-            # brute-force last frame
-            last_pts = None
-            for f in c.decode(video=vs.index):
-                last_pts = f.pts
-            if last_pts is not None and vs.time_base and vs.average_rate:
-                fps  = float(vs.average_rate)
-                dur  = last_pts * vs.time_base
-                frm  = int(round(dur * fps))
-                return dur, frm, fps
+            stream = next((s for s in c.streams if s.type == "video"), None)
+            if stream and stream.duration:                          # in stream time-base
+                length = stream.duration * stream.time_base
+            elif c.duration:                                        # container field
+                length = c.duration / av.time_base
+            else:
+                return 0
+            return max(0, int(length * 1_000_000))
     except Exception:
-        pass
-    return 0.0, 0, 0.0
+        return 0
 
-# ---------- builder -------------------------------------------------------
-def build_cache(movies_path: str, cache_path: str | None = None) -> dict:
-    if cache_path is None:
-        cache_path = os.path.join(movies_path, ".playlist_cache.json")
 
-    print("[playlist_builder] scanning movie folders …")
-    pat = re.compile(r"(?i)chan[_\-]?0*(\d+)")
-    dir_map = {
-        int(m.group(1)): os.path.join(movies_path, d)
-        for d in os.listdir(movies_path)
-        if (m := pat.search(d)) and os.path.isdir(os.path.join(movies_path, d))
+def build_playlist(dir_path: str) -> Tuple[List[str], List[int]]:
+    """Return (files, durations_us) for a channel directory; empty lists on failure."""
+    files: List[str] = []
+    durations: List[int] = []
+
+    for name in sorted(os.listdir(dir_path)):
+        if not VIDEO_RE.search(name):
+            continue
+        fp = os.path.join(dir_path, name)
+        if not os.path.isfile(fp):
+            continue
+        dur_us = probe_duration_us(fp)
+        if dur_us:
+            files.append(name)       # store basenames only (relative inside channel)
+            durations.append(dur_us)
+
+    return files, durations
+
+
+def write_cache(dir_path: str, files: List[str], durations: List[int]) -> None:
+    """Write playlist.json in *dir_path* (best effort)."""
+    if not files:
+        print(f"  └─ No playable videos in {os.path.basename(dir_path)} – skipping.")
+        return
+
+    start_us = [0]
+    for d in durations[:-1]:
+        start_us.append(start_us[-1] + d)
+    total_us = start_us[-1] + durations[-1]
+
+    data = {
+        "files": files,
+        "durations_us": durations,
+        "start_us": start_us,
+        "total_us": total_us,
     }
 
-    channels: dict[str, dict] = {}
-
-    def _add_channel(idx: int, files: list[str]):
-        rec = {
-            "files":           [],
-            "durations":       [],
-            "duration_us":     [],
-            "start_us":        [],
-            "frames":          [],
-            "fps":             [],
-            "total_duration":  0.0,
-            "total_frames":    0,
-            "total_us":        0
-        }
-
-        cum_us = 0
-        for fp in files:
-            dur, frm, fps = _probe(fp)
-            if frm == 0:
-                print(f"  ! skipping unreadable file: {fp}")
-                continue
-
-            dur_us = int(round(dur * TICK_HZ))
-
-            rec["files"].append(fp)
-            rec["durations"].append(dur)
-            rec["duration_us"].append(dur_us)
-            rec["start_us"].append(cum_us)
-            rec["frames"].append(frm)
-            rec["fps"].append(fps)
-
-            rec["total_duration"] += dur
-            rec["total_frames"]   += frm
-            cum_us += dur_us
-
-        rec["total_us"] = cum_us
-        if rec["files"]:
-            channels[str(idx)] = rec
-
-    # --- normal chan_* folders ------------------------------------------
-    for num, full_dir in sorted(dir_map.items()):
-        vids = [f for f in os.listdir(full_dir)
-                if f.lower().endswith((".mp4", ".mkv", ".avi", ".mov"))]
-        vids.sort(key=_nat_key)
-        _add_channel(num, [os.path.join(full_dir, v) for v in vids])
-
-    # --- fallback: loose files as channels -------------------------------
-    if not channels:
-        vids = [f for f in os.listdir(movies_path)
-                if f.lower().endswith((".mp4", ".mkv", ".avi", ".mov"))]
-        vids.sort(key=_nat_key)
-        for idx, fn in enumerate(vids, 1):
-            _add_channel(idx, [os.path.join(movies_path, fn)])
-
-    data = {"generated": time.time(), "channels": channels}
-    pathlib.Path(cache_path).write_text(json.dumps(data, indent=2))
-    print(f"[playlist_builder] cache written → {cache_path}")
-    return data
+    out_fp = os.path.join(dir_path, "playlist.json")
+    try:
+        with open(out_fp, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        print(f"  └─ wrote {out_fp}")
+    except Exception as exc:
+        print(f"  └─ ERROR writing {out_fp}: {exc}", file=sys.stderr)
 
 
-# -------------------------------------------------------------------------
+# ── main ─────────────────────────────────────────────────────────────────────
+def main(root: str):
+    root = os.path.abspath(root)
+    if not os.path.isdir(root):
+        sys.exit(f"Movies path not found: {root}")
+
+    print(f"Scanning {root}")
+
+    for entry in os.scandir(root):
+        if not entry.is_dir():
+            continue
+        m = CHAN_RE.match(entry.name)
+        if not m:
+            continue
+
+        ch_num = int(m.group(1))
+        dir_path = entry.path
+        print(f"· Channel {ch_num:02d}  ({dir_path})")
+        files, durations = build_playlist(dir_path)
+        write_cache(dir_path, files, durations)
+
+
 if __name__ == "__main__":
-    import argparse, sys
-    ap = argparse.ArgumentParser(description="Rebuild playlist cache")
-    ap.add_argument("root", nargs="?", default="movies",
-                    help="root movie folder (default: ./movies)")
+    ap = argparse.ArgumentParser(description="Generate playlist.json caches.")
+    ap.add_argument(
+        "movies_path",
+        nargs="?",
+        default=None,
+        help="Root directory containing chan_<n> folders (defaults to config.MOVIES_PATH).",
+    )
     args = ap.parse_args()
 
-    build_cache(args.root)
+    # Lazy-import config only when we need its default path
+    if args.movies_path is None:
+        try:
+            import config
+
+            args.movies_path = getattr(config, "MOVIES_PATH", "movies")
+        except Exception:
+            args.movies_path = "movies"
+
+    main(args.movies_path)

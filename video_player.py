@@ -82,7 +82,7 @@ class VideoPlayer:
 
     def seek_to(self, sec: float):
         self.player.seek_simple(Gst.Format.TIME,
-                                Gst.SeekFlags.FLUSH | Gst.SeekFlags.KEY_UNIT,
+                                Gst.SeekFlags.FLUSH | Gst.SeekFlags.ACCURATE,
                                 int(max(0.0, sec) * Gst.SECOND))
 
     # NEW: mute / un-mute
