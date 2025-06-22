@@ -41,7 +41,7 @@ INFO_OVERLAY_DURATION = 8.0   # seconds to show overlay on “i”
 
 # ── Static‐transition defaults (blocky CRT snow + filtered hiss) ───────────
 
-STATIC_BURST_SEC           = .25
+STATIC_BURST_SEC           = .75
 STATIC_BLOCK_SIZE         = 1
 STATIC_CUTOFF_HZ          = 2000.0
 STATIC_SCANLINE_INTENSITY = 0.95
