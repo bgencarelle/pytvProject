@@ -120,10 +120,20 @@ class TVEmulator:
     # ── helpers ----------------------------------------------------------
 
     def _prime_static(self):
-        off = random.uniform(0, max(0, self.static_len - self.min_static))
+        if not self.static_vp:
+            return
+
+        # Open at a random offset
+        off = random.uniform(0.0, max(0.0, self.static_len - self.min_static))
         self.static_vp.open(self.static_fp, off)
-        self.static_vp.set_volume(0.0)
-        self.static_vp.player.set_state(Gst.State.PLAYING)  # not PAUSED
+        self.static_vp.set_volume(1.0)
+
+        # Preroll the pipeline fully (video + audio)
+        self.static_vp.player.set_state(Gst.State.PLAYING)
+        # Block until preroll completes (returns GST_STATE_CHANGE_SUCCESS)
+        self.static_vp.player.get_state(1_000_000_000)  # 1 s timeout in nanosecond units
+        # Now pause at the first frame
+        self.static_vp.player.set_state(Gst.State.PAUSED)
 
     def _path_off(self, ch: int, when: float):
         chan = self.ch_mgr.channels.get(ch)
