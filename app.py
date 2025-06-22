@@ -1,17 +1,17 @@
 """
-app.py – pause-card edition (static-safe)
+app.py – single-playbin static burst edition
 
-Plays movies, shows pause cards, masks channel switches with static,
-synchronised by the µ-second ChannelManager timeline.
+Plays movies and static bursts using a single VideoPlayer. All audio goes
+through the same GStreamer sink, avoiding sink contention on embedded platforms.
+Transitions are masked by a static clip played in-line.
 """
-
 from __future__ import annotations
 
 import bisect, os, random, threading, time
 from typing import Optional
 
-import gi                        # silence version warning
-gi.require_version("Gst", "1.0") # must precede import Gst
+import gi  # silence version warning
+gi.require_version("Gst", "1.0")
 from gi.repository import Gst
 
 import pygame
@@ -92,24 +92,21 @@ class TVEmulator:
         self.clock = pygame.time.Clock()
 
         # core state ------------------------------------------------------
-        self.ch_mgr   = ChannelManager(config.MOVIES_PATH)
-        self.ref_time = config.REFERENCE_START_TIME
-        self.curr_ch  = config.START_CHANNEL or self.ch_mgr.min_ch
-        self.player   = VideoPlayer()
+        self.ch_mgr    = ChannelManager(config.MOVIES_PATH)
+        self.ref_time  = config.REFERENCE_START_TIME
+        self.curr_ch   = config.START_CHANNEL or self.ch_mgr.min_ch
+        self.player    = VideoPlayer()
         self.curr_path = ""
-        self.dest_path = None          # NEW: what static will reveal
+        self.next_file: Optional[str]  = None
+        self.next_off:  float          = 0.0
 
         # static resources ------------------------------------------------
         self.static_fp  = os.path.join(config.MOVIES_PATH, "static_video.mp4")
         self.static_len = _probe_len(self.static_fp)
         self.min_static = getattr(config, "STATIC_DURATION", 0.5)
-        self.static_vp  = VideoPlayer() if self.static_len else None
-        if self.static_vp: self._prime_static()
 
         # transition / overlay -------------------------------------------
         self.phase, self.static_start = "normal", 0.0
-        self.next_ch: Optional[int] = None
-        self.tmp_vp:  Optional[VideoPlayer] = None
         self.tid = 0
         self.overlay_expire = time.time() + config.OVERLAY_DURATION
         self.force_overlay  = False
@@ -118,23 +115,6 @@ class TVEmulator:
         self._open_channel(self.curr_ch)
 
     # ── helpers ----------------------------------------------------------
-
-    def _prime_static(self):
-        if not self.static_vp:
-            return
-
-        # Open at a random offset
-        off = random.uniform(0.0, max(0.0, self.static_len - self.min_static))
-        self.static_vp.open(self.static_fp, off)
-        self.static_vp.set_volume(1.0)
-
-        # Preroll the pipeline fully (video + audio)
-        self.static_vp.player.set_state(Gst.State.PLAYING)
-        # Block until preroll completes (returns GST_STATE_CHANGE_SUCCESS)
-        self.static_vp.player.get_state(1_000_000_000)  # 1 s timeout in nanosecond units
-        # Now pause at the first frame
-        self.static_vp.player.set_state(Gst.State.PAUSED)
-
     def _path_off(self, ch: int, when: float):
         chan = self.ch_mgr.channels.get(ch)
         if not chan or not chan.files:
@@ -145,7 +125,7 @@ class TVEmulator:
 
     def _open_channel(self, ch: int):
         path, off = self._path_off(ch, time.time())
-        if path != PAUSE_SENTINEL:
+        if path != PAUSE_SENTINEL and path != self.static_fp:
             self.player.open(path, off)
         else:
             self.player.close()
@@ -153,70 +133,34 @@ class TVEmulator:
         self.overlay_expire = time.time() + config.OVERLAY_DURATION
 
     # ── static-masked transition ---------------------------------------
-    def _close_tmp(self):
-        if self.tmp_vp: self.tmp_vp.close(); self.tmp_vp = None
-
     def _begin_static(self, dest: int):
-        self.player.close()
-        if self.static_vp:
-            self.static_vp.player.set_state(Gst.State.PLAYING)
-            self.static_vp.set_volume(1.0)
+        # preload next channel
+        self.next_file, self.next_off = self._path_off(dest,
+            time.time() + self.min_static)
+
+        # start static on same player
+        off = random.uniform(0.0, max(0.0, self.static_len - self.min_static))
+        self.player.open(self.static_fp, off)
+        self.player.set_volume(1.0)
 
         self.phase, self.static_start = "static", time.time()
-        self.next_ch, self.tid = dest, self.tid + 1
-        self._close_tmp()
+        self.next_ch = dest
+        self.tid += 1
         self.overlay_expire = time.time() + config.OVERLAY_DURATION
-
-        # decide upfront what we will show at burst end
-        self.dest_path, dest_off = self._path_off(dest, self.static_start + self.min_static)
-        if self.dest_path != PAUSE_SENTINEL:
-            threading.Thread(target=self._loader,
-                             args=(dest, self.tid, dest_off),
-                             daemon=True).start()
-
-    # --- inside _loader() ---------------------------------------------------
-    def _loader(self, dest_ch: int, tid_tag: int, off: float):
-        vp = VideoPlayer()
-        try:
-            vp.open(self.dest_path, off)
-            vp.set_volume(0.0)
-            vp.player.set_state(Gst.State.PAUSED)  # <<< freeze immediately
-        except Exception:
-            return
-
-        reveal_ts = self.static_start + self.min_static  # no extra +50 ms
-        time_to_go = reveal_ts - time.time()
-        if time_to_go > 0:
-            time.sleep(time_to_go)
-
-        # start the clock exactly on cue
-        vp.player.set_state(Gst.State.PLAYING)
-
-        if tid_tag == self.tid:
-            self.tmp_vp = vp
-        else:
-            vp.close()
 
     def _maybe_finish_static(self):
         if self.phase != "static": return
         if time.time() - self.static_start < self.min_static: return
 
-        # ready when either pause card or preloaded vp is in place
-        if self.dest_path == PAUSE_SENTINEL or self.tmp_vp:
-            if self.static_vp:
-                self.static_vp.player.set_state(Gst.State.PAUSED)
-                self.static_vp.set_volume(0.0); self._prime_static()
-
-            if self.dest_path == PAUSE_SENTINEL:
-                self.player.close(); self.curr_path = PAUSE_SENTINEL
-            else:
-                self.tmp_vp.set_volume(1.0)
-                self.player     = self.tmp_vp
-                self.curr_path  = self.player.path
-                self.tmp_vp     = None
-
-            self.curr_ch = self.next_ch
-            self.phase   = "normal"
+        # switch into next movie on same pipeline
+        if self.next_file and self.next_file != PAUSE_SENTINEL:
+            self.player.open(self.next_file, self.next_off)
+        else:
+            # pause card or missing: close to show overlay
+            self.player.close()
+        self.curr_ch   = self.next_ch
+        self.curr_path = self.next_file or ""
+        self.phase     = "normal"
 
     # ── main loop -------------------------------------------------------
     def run(self):
@@ -227,9 +171,11 @@ class TVEmulator:
                 elif e.type == KEYDOWN:
                     if   e.key in (K_ESCAPE, K_q): running = False
                     elif e.key == K_i: self.force_overlay ^= True
-                    elif e.key in (K_RIGHT, K_SPACE, K_LEFT) and self.phase == "normal":
-                        nxt = self.ch_mgr.next(self.curr_ch) if e.key in (K_RIGHT, K_SPACE) \
-                              else self.ch_mgr.prev(self.curr_ch)
+                    elif e.key in (K_RIGHT, K_SPACE, K_LEFT) \
+                         and self.phase == "normal":
+                        nxt = ( self.ch_mgr.next(self.curr_ch)
+                              if e.key in (K_RIGHT, K_SPACE)
+                              else self.ch_mgr.prev(self.curr_ch) )
                         self._begin_static(nxt)
                     elif e.key == K_f:
                         config.FULLSCREEN ^= True
@@ -246,20 +192,14 @@ class TVEmulator:
 
             # draw --------------------------------------------------------
             if self.curr_path == PAUSE_SENTINEL:
-                _draw_pause_card(self.screen, self.ch_mgr, self.curr_ch, self.ref_time)
-
-            elif self.phase == "static" and self.static_vp:
-                frame = self.static_vp.decode_frame()
-                surf  = pygame.image.frombuffer(frame, frame.shape[1::-1], "RGB")
-                surf  = pygame.transform.scale(surf, self.screen.get_size())
-                self.screen.blit(surf, (0, 0))
-                if self.tmp_vp: self.tmp_vp.decode_frame()
+                _draw_pause_card(self.screen, self.ch_mgr, self.curr_ch,
+                                 self.ref_time)
 
             else:
                 frame = self.player.decode_frame()
                 render_frame(self.screen, frame, self.player.sar)
 
-            # overlay -----------------------------------------------------
+            # ── overlay -----------------------------------------------------
             show = self.force_overlay or time.time() < self.overlay_expire
             if show:
                 draw_overlay(
@@ -274,9 +214,7 @@ class TVEmulator:
             pygame.display.flip()
             self.clock.tick(config.FPS)
 
-        # shutdown -------------------------------------------------------
         self.player.close()
-        if self.static_vp: self.static_vp.close()
         pygame.quit()
 
 
