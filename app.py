@@ -118,11 +118,12 @@ class TVEmulator:
         self._open_channel(self.curr_ch)
 
     # ── helpers ----------------------------------------------------------
+
     def _prime_static(self):
         off = random.uniform(0, max(0, self.static_len - self.min_static))
         self.static_vp.open(self.static_fp, off)
-        self.static_vp.set_volume(1.0)
-        self.static_vp.player.set_state(Gst.State.PAUSED)
+        self.static_vp.set_volume(0.0)
+        self.static_vp.player.set_state(Gst.State.PLAYING)  # not PAUSED
 
     def _path_off(self, ch: int, when: float):
         chan = self.ch_mgr.channels.get(ch)
