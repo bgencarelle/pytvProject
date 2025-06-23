@@ -28,7 +28,8 @@ START_CHANNEL = 0x00
 CHANNEL_CHANGE_DEBOUNCE = 0.35
 
 # Display settings
-FULLSCREEN = True
+FULLSCREEN = False
+DIAG_REFRESH_INTERVAL = 1.0   # once per second by default
 WINDOWED_SIZE = (800, 600)
 
 # Transition effect type: "static" or "fade"
