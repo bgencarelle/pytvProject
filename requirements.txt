@@ -3,5 +3,6 @@ numpy
 av
 python-vlc
 pyaudio
+psutil
 #pygobject-stubs ä
 #pygobject==3.50.1

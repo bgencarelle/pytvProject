@@ -28,7 +28,7 @@ START_CHANNEL = 0x00
 CHANNEL_CHANGE_DEBOUNCE = 0.35
 
 # Display settings
-FULLSCREEN = False
+FULLSCREEN = True
 DIAG_REFRESH_INTERVAL = 1.0   # once per second by default
 WINDOWED_SIZE = (800, 600)
 
