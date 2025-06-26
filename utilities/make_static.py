@@ -146,7 +146,7 @@ def main():
         "-af", f"lowpass=f={getattr(config, 'STATIC_CUTOFF_HZ', 4000)}:p=1",
         "-c:v", video_codec,
         *codec_opts,
-        "-b:v", "10M",                    # enforce at least 10 Mbps
+        "-b:v", "1M",                    # enforce at least 10 Mbps
         "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", br, "-ar", "48000", "-ac", "2",
         out
