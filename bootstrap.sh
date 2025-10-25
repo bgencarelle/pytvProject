@@ -2,8 +2,10 @@
 #
 # PyTV Bootstrap Script
 #
-# This script will set up the entire PyTV environment from scratch:
-# 1. Clones or updates the Git repository.
+# This script will set up or update the PyTV environment from
+# within the project directory.
+#
+# 1. Updates the Git repository via pull.
 # 2. Installs all system dependencies for macOS (via Homebrew) or Linux (via APT).
 # 3. Creates the 57 channel directories (movies/chan_01 to movies/chan_57).
 # 4. Creates a Python virtual environment (.venv) and installs Python packages.
@@ -14,8 +16,7 @@ set -e
 
 # --- 1. Get Project Files from Git ---
 
-REPO_URL="https://github.com/bgencarelle/pytvProject.git"
-PROJECT_DIR="pytvProject"
+echo "Updating project files from Git..."
 
 # Check if git is installed
 if ! command -v git &> /dev/null; then
@@ -23,15 +24,15 @@ if ! command -v git &> /dev/null; then
     exit 1
 fi
 
-if [ -d "$PROJECT_DIR" ]; then
-    echo "Directory '$PROJECT_DIR' already exists. Pulling latest changes..."
-    cd "$PROJECT_DIR"
-    git pull
-else
-    echo "Cloning repository from $REPO_URL..."
-    git clone "$REPO_URL"
-    cd "$PROJECT_DIR"
+# Check if this is a git repository
+if [ ! -d ".git" ]; then
+    echo "ERROR: This does not appear to be a Git repository."
+    echo "Please run this script from the root of the pytvProject directory."
+    exit 1
 fi
+
+# Pull the latest changes
+git pull
 
 echo "Successfully updated project."
 
@@ -121,7 +122,13 @@ VENV_DIR=".venv"
 
 if [ ! -d "$VENV_DIR" ]; then
     echo "Creating Python virtual environment at '$VENV_DIR'..."
-    python3 -m venv "$VENV_DIR"
+
+    # --- CRITICAL FIX ---
+    # Add --system-site-packages to link to the system-level
+    # GStreamer ('gi') libraries installed in step 2.
+    python3 -m venv --system-site-packages "$VENV_DIR"
+    # --------------------
+
 else
     echo "Virtual environment '$VENV_DIR' already exists."
 fi
@@ -129,8 +136,11 @@ fi
 echo "Activating virtual environment..."
 source "$VENV_DIR/bin/activate"
 
-echo "Installing Python dependencies from requirements.txt..."
+echo "Installing/updating Python dependencies from requirements.txt..."
 pip install -r requirements.txt
+
+# Deactivate venv, runPytv.sh will activate it
+deactivate
 
 echo "Making runPytv.sh executable..."
 if [ -f "runPytv.sh" ]; then
