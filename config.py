@@ -3,7 +3,6 @@
 Configuration settings for the TV emulator.
 """
 import datetime
-# config.py
 import time
 FPS   = 30
 
@@ -13,7 +12,7 @@ RUN_PLAYLIST_BUILDER = True
 
 # ── Basic Application Settings ──────────────────────────────────────────────
 
-SHOW_OVERLAYS = True
+SHOW_OVERLAYS = False
 
 # Path to directory containing video channel files
 MOVIES_PATH = "movies"

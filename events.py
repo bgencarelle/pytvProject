@@ -61,4 +61,15 @@ class EventManager:
             if event.key == K_f:
                 return {"type": "toggle_fullscreen"}
 
+            # “1” bumps us +3 ms, “2” bumps us –3 ms
+            if event.key == K_1:
+                return {"type": "adjust_offset", "delta": +0.001}
+            if event.key == K_2:
+                return {"type": "adjust_offset", "delta": -0.001}
+            if event.key == K_3:
+                return {"type": "adjust_offset", "delta": +0.100}
+            if event.key == K_4:
+                return {"type": "adjust_offset", "delta": -0.100}
+
+
         return None

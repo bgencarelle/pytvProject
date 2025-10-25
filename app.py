@@ -87,16 +87,17 @@ class TVEmulator:
         # window ----------------------------------------------------------
         pygame.init()
         pygame.mixer.init()
+        pygame.mouse.set_visible(False)
         self.screen = pygame.display.set_mode(
             (0, 0) if config.FULLSCREEN else config.WINDOWED_SIZE,
             pygame.FULLSCREEN if config.FULLSCREEN else 0,
         )
-        pygame.mouse.set_visible(False)
         self.clock = pygame.time.Clock()
 
         # core state ------------------------------------------------------
         self.ch_mgr    = ChannelManager(config.MOVIES_PATH)
         self.ref_time  = config.REFERENCE_START_TIME
+        self.time_offset = 0.0  # <— your new, mutable offset
         self.curr_ch   = config.START_CHANNEL or self.ch_mgr.min_ch
         self.player    = VideoPlayer()
         self.curr_path = ""
@@ -122,11 +123,19 @@ class TVEmulator:
 
     # ── path/offset --------------------------------------------------------
     def _path_off(self, ch: int, when: float):
+        """
+        Return (path, offset-in-seconds) for channel *ch* at wall-clock
+        time *when*, honouring the runtime-adjustable self.time_offset.
+        """
+        effective_ref = self.ref_time + self.time_offset      # ← updated each call
+
         chan = self.ch_mgr.channels.get(ch)
-        if not chan or not chan.files:
-            off = ((when - self.ref_time) % self.static_len) if self.static_len else 0.0
+        if not chan or not chan.files:                        # static loop
+            off = ((when - effective_ref) % self.static_len) if self.static_len else 0.0
             return self.static_fp, off
-        off = self.ch_mgr.offset(ch, when, self.ref_time)
+
+        # NORMAL CHANNEL: use the shifted reference here too
+        off = self.ch_mgr.offset(ch, when, effective_ref)
         return chan.path, off
 
     def _open_channel(self, ch: int):
@@ -176,6 +185,7 @@ class TVEmulator:
     # ── main loop ---------------------------------------------------------
     def run(self):
         running = True
+        pygame.mouse.set_visible(False)
         while running:
             # --- inside TVEmulator.run() main loop --------------------------------
             for e in pygame.event.get():
@@ -201,6 +211,23 @@ class TVEmulator:
                         (0, 0) if config.FULLSCREEN else config.WINDOWED_SIZE,
                         pygame.FULLSCREEN if config.FULLSCREEN else 0)
                     pygame.mouse.set_visible(False)
+                elif t == "adjust_offset":
+                    # 1) bump the global skew
+                    self.time_offset += act.get("delta", 0.0)
+
+                    # 2) recompute where the play-head should sit *now*
+                    now = time.time()
+                    path, off = self._path_off(self.curr_ch, now)
+
+                    # 3) if we crossed into another file, open it; otherwise just seek
+                    if path != self.curr_path:
+                        self.curr_path = path
+                        if path not in (PAUSE_SENTINEL, self.static_fp):
+                            self.player.open(path, off)
+                        else:
+                            self.player.close()  # static or pause sentinel
+                    else:
+                        self.player.seek_to(off)  # same file → quick seek
 
             if self.phase == "normal":
                 p_now, _ = self._path_off(self.curr_ch, time.time())
@@ -226,6 +253,7 @@ class TVEmulator:
                     self.ref_time,
                     time.time() - self.static_start if self.phase == "static" else 0.0,
                     self.phase == "static",
+                    self.time_offset,
                 )
 
             pygame.display.flip()
