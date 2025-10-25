@@ -1,22 +1,35 @@
-PyTV - A Time-Synchronized TV EmulatorPyTV is a multi-channel TV emulator that synchronizes playback using a shared, internal time source. It is designed as a "self-portrait": a poetic reference to one's own birth, where all playback is calculated from a single, fixed point in time (REFERENCE_START_TIME) defined in config.py.This architecture ensures that multiple PyTV instances, running on different machines, will remain perfectly synchronized. They don't need a central clock or server; they only need to share the same configuration and have synchronized system clocks.The Architecture: A Deterministic Time-Based SchedulerUnlike a typical video player, PyTV does not "play" a file and wait for it to end. Instead, it runs a constant "force-sync" loop that determines what should be playing at any given microsecond.The Universal Timeline: The entire system is anchored to REFERENCE_START_TIME [cite: config.py]. This fixed timestamp is the "birth" of the timeline.The Scheduler (channel_manager.py): This is the "brain." It calculates the exact state of any channel at the current moment. It is a pure function: f(current_wall_time, REFERENCE_START_TIME, user_time_offset) -> (correct_file_path, correct_file_offset).The Enforcer (app.py): The main application loop [cite: app.py, line 185] is an active enforcer. Every frame, it asks the Scheduler, "What should be playing right now?" It compares this "correct" state to its current state.The "Dumb" Player (video_player.py): If the state is wrong (i.e., the timeline has crossed into a new clip), the Enforcer forces the video player to comply by either opening the new file or seeking to the correct offset [cite: app.py, lines 225-230]. The player's internal clock (PTS) is irrelevant.The Synchronized UI (overlays.py): The info overlay [cite: overlays.py] also calls the Scheduler [cite: overlays.py, line 160] to get the "correct" time. This ensures the UI is always in sync with the intended state, not the player's.FeaturesDeterministic Sync: Playback is mathematically calculated from the wall clock, not event-driven.Multi-Channel Playlists: Automatically loads and schedules content from movies/chan_NN directories.Pause-Aware Playlists: The playlist_builder.py script [cite: playlist_builder.py] automatically inserts __PAUSE__ sentinels between clips.Web-Based Remote Control: main.py [cite: main.py] launches a web_remote server, allowing for control from a browser.Dynamic Time-Shifting: The adjust_offset feature doesn't just "seek" the video; it "skews" the entire universal timeline, allowing for fine-grained manual sync between multiple instances.Extensible Event System: A central EventManager [cite: events.py] provides a simple post() API for adding new inputs (e.g., IR remotes, GPIO buttons).Getting Started1. DependenciesYou must install both Python packages and system-level libraries.Python Packages:(These are in requirements.txt)pygamenumpyavSystem Libraries:(These must be installed with a package manager)On macOS (using Homebrew):# For GStreamer (video player)
-brew install gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad pygobject3
+# PyTV – A Time-Synchronized TV Emulator
 
-# For Pygame (window, fonts, input)
-brew install sdl2 sdl2_image sdl2_mixer sdl2_ttf
-On Linux (Debian/Ubuntu):# For GStreamer (video player)
-sudo apt install python3-gi python3-gi-cairo gir1.2-gst-plugins-base-1.0 gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad
+PyTV is a multi-channel TV emulator that synchronizes playback using a shared, internal time source.  
+It is conceived as a *self-portrait*: every frame is calculated from one fixed “birth” timestamp (`REFERENCE_START_TIME`) in **config.py**.
 
-# For Pygame (window, fonts, input)
-sudo apt install libsdl2-2.0-0 libsdl2-image-2.0-0 libsdl2-mixer-2.0-0 libsdl2-ttf-2.0-0
-2. BootstrapRun the bootstrap script to create the necessary directory structure.bash bootstrap.sh
-This will create a movies/ directory with a few example channel folders. Add your video files to these movies/chan_... directories.3. ConfigureEdit config.py to set your "birth" time.REFERENCE_START_TIME: This is the anchor for your entire timeline. For testing, you can set it to start now by using:import time
-REFERENCE_START_TIME = time.time()
-4. RunUse the run.sh script to create a virtual environment, install dependencies, and start the application.bash run.sh
-The script will automatically run the playlist_builder.py [cite: main.py, line 6] to scan your videos and generate the timelines.Controls← / → / Space: Change channel.i: Toggle info overlay.f: Toggle fullscreen.q / Esc: Quit.Advanced Sync ControlsThese keys are for fine-tuning the sync between multiple PyTV instances:1 / 2: Adjust time offset by +/- 1ms3 / 4: Adjust time offset by +/- 100msThis modifies the self.time_offset variable [cite: app.py, line 103], which skews this instance's timeline relative to the REFERENCE_START_TIME.Extending PyTV (API)You can add new inputs (like an IR remote or GPIO buttons) by posting actions to the central EventManager.# Example: in your new ir_remote.py
-from events import EventManager
+---
 
-def on_ir_code_received(code):
-    if code == "KEY_CHANNELUP":
-        action = {"type": "switch_channel", "to": "next"}
-        EventManager.post(action)
-LicenseTBD
+## Architecture – A Deterministic Time-Based Scheduler
+
+* **Universal timeline** — anchored to `REFERENCE_START_TIME`, the “birth” of the system.  
+* **Scheduler (`channel_manager.py`)** — pure function  
+  `f(current_wall_time, REFERENCE_START_TIME, user_time_offset) → (file_path, file_offset)`
+* **Enforcer (`app.py`)** — main loop that compares the *correct* state to the current player state each frame.  
+* **“Dumb” player (`video_player.py`)** — obeys whatever the Enforcer tells it; its PTS clock is irrelevant.  
+* **Synchronized UI (`overlays.py`)** — queries the Scheduler so overlays always show the mathematically correct time.
+
+---
+
+## Features
+
+* **Deterministic sync** – playback is fully derived from the wall clock.  
+* **Multi-channel playlists** – auto-loads `movies/chan_NN` directories.  
+* **Pause-aware playlists** – `playlist_builder.py` inserts `__PAUSE__` sentinels.  
+* **Web-based remote control** – `main.py` runs a `web_remote` server.  
+* **Dynamic time-shifting** – `adjust_offset` skews the whole timeline (not just a seek).  
+* **Extensible events** – central `EventManager.post()` API for new inputs.
+
+---
+
+## Getting Started
+
+### 1. Dependencies
+
+#### Python packages (see `requirements.txt`)
+
