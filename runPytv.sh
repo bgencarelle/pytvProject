@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# run.sh
+# runPytv.sh
 # Creates venv, installs dependencies, and runs PyTV.
 #
 echo "Starting PyTV..."
@@ -32,3 +32,4 @@ fi
 # Run the main application
 echo "Launching main.py..."
 python main.py
+
